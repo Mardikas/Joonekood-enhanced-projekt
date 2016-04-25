@@ -1,0 +1,148 @@
+/*
+ * main.c
+ * 
+ *
+ * Hannes, Raivo, Karl
+ */
+#include <avr/io.h>
+#include "drivers/board.h"
+#include "drivers/adc.h"
+#include "drivers/motor.h"
+#include "drivers/com.h"
+#include "drivers/gyro.h"
+#include <math.h>
+
+#define THRESHOLD 1200// hea on 1200
+#define ESIMENE 1
+#define TEINE 2
+#define KOLMAS 4
+#define SUM (ESIMENE+TEINE+KOLMAS)
+//hea config on 12 30 95 <-- summa on 132
+int difference=100; //kahe mootori omavaheline pöörete erinevuse suhe. Nt difference 90 tähendab, et aeglasema mootori kiirus on 90% kiirema mootori kiirusest
+int speed=500; //kiirema mootori kiirus
+char direction='r'; //'r' või 'l' ehk left või right, ehk kummale poole robot pöörama peab
+
+//Teeme PIDiks ümber
+
+void turn(char side, int amount, int speed);
+float find_D(float P_error, float lastError, int D_gain);
+int read_sensor(int *joonDig); //returnib mustade sensorite arvu
+void decide(int sum_error, int D_error);
+
+int main(void)
+{
+   // char buff[30];
+    clock_init();        // Seadista süsteemi kell 32MHz peale
+    board_init();        // Seadista LED ja nupud
+    adc_init();          // Seadista ADC kanal 0
+    radio_init(57600);   // Seadista raadiomooduli UART
+    motor_init();        // Seadista mootorikontroller
+    
+    //valge=0, must=1ä
+	int joonDig[7];
+    int lastError;
+    float P_error=0;
+	float I_error=0;
+	float D_error=0;
+	const int P_gain=70;
+	const int I_gain=150;
+	const int D_gain=0;
+	int sum_error;
+    int blackCounter;
+
+
+    while(!sw1_read());
+	_delay_ms(1000);
+    while(1)
+    {
+        lastError=P_error;
+		blackCounter=read_sensor(joonDig);
+		if(blackCounter==0){
+			P_error=lastError;
+		}
+		else if(blackCounter==1){
+			P_error=(joonDig[0]*KOLMAS+joonDig[2]*TEINE+joonDig[3]*ESIMENE-joonDig[4]*ESIMENE-joonDig[5]*TEINE-joonDig[6]*KOLMAS)*2;//+-8, +-6, +-2 
+		}
+		else{
+			P_error=(joonDig[0]*KOLMAS+joonDig[2]*TEINE+joonDig[3]*ESIMENE-joonDig[4]*ESIMENE-joonDig[5]*TEINE-joonDig[6]*KOLMAS);//mingi number -7'st 7ni	
+		}
+		I_error=(P_error-lastError);//mingi number -1,37'st -1,37ni
+		D_error=find_D(P_error, lastError, D_gain);//D error annab mingi arvu -1,37st 1,37ni. Kui on miinus, tuleb korrigeerimist vähendada, kui on >0, tuleb korrigeerimist suurendada (ükskõik kummale poole)
+		sum_error=(P_error*P_gain+I_error*I_gain);
+		decide(sum_error, D_error);
+    }
+}
+
+void turn(char side, int sum_error, int speed){
+    if(side=='l'){
+        if(sum_error<=2000){
+            motor_set(speed-sum_error, speed);
+        }
+        else{
+            motor_set(-1000, speed);
+        }
+    }
+    else{
+        if(sum_error<=2000){
+            motor_set(speed, speed-sum_error);
+        }
+        else{
+            motor_set(speed, -1000);
+        }
+    }
+}
+int read_sensor(int *joonDig){
+	int counter;
+	int blackCounter=0;
+	int joonAn[7]; //joone analoogväärtus
+	for(counter=0;counter<7;counter++){
+		joonAn[counter]=adc_read(counter);
+		if(joonAn[counter]<THRESHOLD){
+			joonDig[counter]=0;        //valge
+		}
+		else{
+			joonDig[counter]=1; //must
+			blackCounter++;
+		}
+    }
+	return blackCounter;
+}
+float find_D(float P_error, float lastError, int D_gain){
+	float D_error;
+	if(P_error<0){
+		P_error=-P_error;
+	}
+	if(lastError<0){
+		lastError=-lastError;
+	}
+	if(P_error!=0&&lastError!=0){
+		D_error=P_error/lastError; //kui D väärtus on üks või rohkem, siis error kas on sama või suureneb, st tuleb parandust suurendada, kui on väiksem kui 0, tuleb parandust vähendada, st. errorist maha lahutada
+		if(D_error>=0){
+			D_error=D_error*D_gain;
+		}
+		else{
+			D_error=-(pow(D_error,-1))*D_gain;
+		}
+		return D_error;
+	}
+	return 0;
+}
+
+void decide(int sum_error, int D_error){
+	if(sum_error<0){//kontrollib kummal pool hetkehälve on (negatiivsele poolele lahutab D_errori juurde, positiivsele liidab)
+		sum_error=sum_error-D_error;
+	}
+	else if(sum_error>0){
+		sum_error=sum_error+D_error;
+	}
+	//otsustab erinevuste põhjal, kuhu pöörata:
+	if(sum_error>0){
+		turn('l', sum_error, speed);
+	}
+	else if(sum_error<0){
+		turn('r', sum_error, speed);
+	}
+	else{
+		motor_set(speed, speed);
+	}
+}
