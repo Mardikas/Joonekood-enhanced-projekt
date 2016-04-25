@@ -66,10 +66,12 @@ int main(void)
 		else{
 			P_error=(joonDig[0]*KOLMAS+joonDig[2]*TEINE+joonDig[3]*ESIMENE-joonDig[4]*ESIMENE-joonDig[5]*TEINE-joonDig[6]*KOLMAS);//mingi number -7'st 7ni	
 		}
-		I_error=(P_error-lastError);//mingi number -1,37'st -1,37ni
+		I_error=(P_error+(I_error/2));//uus mant
+		
 		D_error=find_D(P_error, lastError, D_gain);//D error annab mingi arvu -1,37st 1,37ni. Kui on miinus, tuleb korrigeerimist vähendada, kui on >0, tuleb korrigeerimist suurendada (ükskõik kummale poole)
 		sum_error=(P_error*P_gain+I_error*I_gain);
 		decide(sum_error, D_error);
+		_delay(5);
     }
 }
 
